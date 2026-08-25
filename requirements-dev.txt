@@ -1,0 +1,12 @@
+# Local development / testing / model-generation dependencies.
+-r requirements.txt
+
+pytest>=8.0.0
+numpy>=1.26.0,<2.0.0
+# [tracer] extra installs aws-xray-sdk, required by the inference handler's Tracer.
+aws-lambda-powertools[tracer]>=2.30.0
+
+# Used by scripts/generate_model.py to build the sample ONNX models,
+# and to run the inference handler locally.
+onnx>=1.16.0
+onnxruntime>=1.17.0
