@@ -1,0 +1,4 @@
+# CDK application dependencies (infrastructure synthesis/deployment).
+# aws_cdk.aws_s3files (L1 constructs for Amazon S3 Files) requires a recent CDK.
+aws-cdk-lib>=2.266.0
+constructs>=10.3.0,<11.0.0

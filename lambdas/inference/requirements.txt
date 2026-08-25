@@ -1,0 +1,6 @@
+# Inference Lambda runtime dependencies (bundled into the deployment package).
+onnxruntime>=1.17.0,<2.0.0
+numpy>=1.26.0,<2.0.0
+# The [tracer] extra pulls in aws-xray-sdk, which Powertools Tracer imports at
+# construction time. Without it the handler fails to import at cold start.
+aws-lambda-powertools[tracer]>=2.30.0

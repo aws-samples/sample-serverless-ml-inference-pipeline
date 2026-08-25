@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# CDK
+cdk.out/
+.cdk.staging/
+# Cached context lookups (AZ names etc.) embed the deploying account ID.
+# Deliberately not tracked so it cannot leak into history; CDK regenerates it.
+cdk.context.json
+
+# Build artifacts / models
+*.onnx
+models_local/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/

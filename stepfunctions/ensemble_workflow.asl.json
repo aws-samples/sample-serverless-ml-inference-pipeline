@@ -1,0 +1,104 @@
+{
+  "Comment": "Multi-model ensemble inference for the S3 Files serverless ML pattern. Runs model_a and model_b in parallel, then combines their predictions.",
+  "StartAt": "ParallelInference",
+  "States": {
+    "ParallelInference": {
+      "Type": "Parallel",
+      "Next": "CombineResults",
+      "Branches": [
+        {
+          "StartAt": "InvokeModelA",
+          "States": {
+            "InvokeModelA": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${ModelAFunctionArn}",
+                "Payload.$": "$"
+              },
+              "ResultSelector": {
+                "prediction.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "TimeoutSeconds": 120,
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "InvokeModelB",
+          "States": {
+            "InvokeModelB": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${ModelBFunctionArn}",
+                "Payload.$": "$"
+              },
+              "ResultSelector": {
+                "prediction.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2.0
+                }
+              ],
+              "TimeoutSeconds": 120,
+              "End": true
+            }
+          }
+        }
+      ]
+    },
+    "CombineResults": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CombinerFunctionArn}",
+        "Payload": {
+          "models.$": "$",
+          "strategy": "${EnsembleStrategy}"
+        }
+      },
+      "ResultSelector": {
+        "result.$": "$.Payload"
+      },
+      "OutputPath": "$.result",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "TimeoutSeconds": 60,
+      "End": true
+    }
+  }
+}

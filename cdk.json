@@ -1,0 +1,29 @@
+{
+  "app": "python3 app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "source.bat",
+      "**/__pycache__",
+      "**/*.pyc",
+      "tests"
+    ]
+  },
+  "context": {
+    "provisionedConcurrency": 0,
+    "lambdaArchitecture": "arm64",
+    "lambdaMemoryMb": 2048,
+    "cacheEnabled": "true",
+    "cacheTtlSeconds": 3600,
+    "ensembleStrategy": "average",
+    "useInterfaceEndpoints": false,
+    "apiAuth": "IAM",
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true
+  }
+}
