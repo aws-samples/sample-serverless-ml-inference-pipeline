@@ -256,44 +256,7 @@ those from the S3 console if any accumulated.
 
 ---
 
-## 11. Notable issues solved during bring-up
-
-These are the real problems encountered getting this to deploy and run, and how
-they were fixed — useful if you adapt the pattern:
-
-1. **Powertools Tracer import crash** — the base `aws-lambda-powertools` package
-   doesn't install `aws-xray-sdk`, which `Tracer()` imports at construction, so
-   the function failed at cold start. Fixed by requiring
-   `aws-lambda-powertools[tracer]`.
-2. **Duplicate security-group construct** — `FileSystem.from_s3_files_access_point()`
-   creates a child security group scoped to the access point, which collides
-   when several functions mount the same access point. Fixed by building the
-   `lambda_.FileSystem` config directly (ARN + mount path + mount-target
-   dependency) and managing the security groups ourselves.
-3. **Apple Silicon architecture mismatch** — the default x86_64 function on an
-   arm64 Mac with no pinned bundling platform caused Docker bundling problems.
-   Fixed by pinning both the Lambda architecture and the Docker bundling
-   platform to `arm64` (configurable via `lambdaArchitecture`).
-4. **403 "does not have permission to mount file system"** — `s3files:ClientMount`
-   is evaluated against the file system, so scoping the policy only to the
-   access-point ARN failed. Fixed by supplying the mount permission through the
-   `FileSystem` `policies` (matching how CDK handles EFS) with `Resource:"*"`.
-5. **CloudFormation circular dependency** — an earlier attempt used an explicit
-   `iam.Policy` plus `fn.node.add_dependency(...)` on the function's own role,
-   which closed a dependency loop through the alias/version/API graph. Removed by
-   using the `FileSystem.policies` mechanism instead (verified offline with a
-   template cycle-check).
-6. **Ensemble `Missing required field 'input_data'`** — the API Gateway → Step
-   Functions integration wraps the request body under a `body` key, so the model
-   functions received `{"body": {...}}` rather than `{"input_data": [...]}`.
-   Fixed by making the handler unwrap `body` for non-API-proxy payloads.
-7. **Docker / environment** — CDK bundling needs a running container engine and a
-   reachable Docker socket; a container engine (Docker Desktop or Colima) must be
-   installed and running.
-
----
-
-## 12. When NOT to use this pattern
+## 11. When NOT to use this pattern
 
 - **GPU inference** → Amazon SageMaker endpoints (Lambda has no GPU).
 - **Sub-50 ms p99 latency** → SageMaker Serverless/Provisioned (NFS mount adds
