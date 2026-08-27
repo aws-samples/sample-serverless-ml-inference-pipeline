@@ -25,7 +25,7 @@ file system id, state machine ARN) so you can plug them into the commands below.
 ## 0. Prerequisites for testing
 
 ```bash
-pip install awscurl
+pip install awscurl==0.39
 ```
 **What it does:** installs `awscurl`, a curl-like tool that automatically
 SigV4-signs requests with your AWS credentials. The API uses `AWS_IAM`
