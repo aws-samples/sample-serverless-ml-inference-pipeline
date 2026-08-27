@@ -10,6 +10,10 @@ multi-model ensemble orchestrated by AWS Step Functions.
 
 This repository is fully working and has been deployed and tested end to end.
 
+> **Note**: This is sample code for demonstration and educational purposes. It is
+> not intended for production use without additional security review and
+> hardening. See [SECURITY.md](./SECURITY.md).
+
 ---
 
 ## 1. What this is (in plain terms)
