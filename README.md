@@ -41,24 +41,7 @@ without redeploying.
 
 ## 2. Architecture
 
-```
-Client
-  |  POST /predict                              POST /ensemble
-  v  (SigV4 / IAM auth)                          v  (SigV4 / IAM auth)
-API Gateway ──────► Predict Lambda        API Gateway ──────► Step Functions (Express)
-                       │                                          │  Parallel
-                       │                                +---------+---------+
-                       ▼                                ▼                   ▼
-                 S3 Files mount                   ModelA Lambda       ModelB Lambda
-                 /mnt/models/model.onnx                │                   │
-                       │                               └──── S3 Files ─────┘
-                       ▼                                 (memory-mapped .onnx reads)
-             S3 bucket (models/ prefix)                        │
-             + /mnt/models/cache/                       Combiner Lambda (average /
-                                                        majority / inverse-latency)
-                                                               │
-                                                               ▼  ensemble prediction
-```
+![Serverless ML Inference pipeline — data flow](docs/architecture.png)
 
 Target technology stack:
 
@@ -184,19 +167,143 @@ cdk deploy
 #   --recursive --exclude "*" --include "*.onnx" --region us-east-1
 ```
 
+> **Why this order?** `cdk` runs `python3 app.py`, so the **venv must be active**
+> (it holds `aws-cdk-lib`). CDK **bundles the Lambda dependencies inside Docker**
+> to produce Linux/arm64 binaries that match the Lambda runtime, so a **container
+> engine (Docker/Colima) must be running before `cdk deploy`**. And `cdk deploy`
+> calls AWS to create resources, so **credentials must be exported**. Each is a
+> prerequisite for the next.
+
 Get the deployed values any time:
 ```bash
 aws cloudformation describe-stacks \
   --stack-name ServerlessMlInferenceS3FilesStack \
   --query "Stacks[0].Outputs" --output table
 ```
-Key outputs: `ModelBucketName`, `PredictEndpoint`, `EnsembleEndpoint`.
-
-Testing the endpoints is documented separately in **[TESTING.md](./TESTING.md)**.
+Key outputs: `ModelBucketName`, `PredictEndpoint`, `EnsembleEndpoint`,
+`EnsembleStateMachineArn`. The next section uses them to test the endpoints.
 
 ---
 
-## 7. Configuration (CDK context)
+## 7. Testing
+
+All commands that call AWS run in a terminal with your AWS credentials
+exported/configured and the Region set to `us-east-1`. Substitute the
+placeholders with values from your stack Outputs (`ModelBucketName`; `<ApiId>`
+from `PredictEndpoint`/`EnsembleEndpoint`; `EnsembleStateMachineArn`) —
+retrievable with the `describe-stacks` command above.
+
+### 7.1 Install awscurl (SigV4 signing)
+
+```bash
+pip install awscurl==0.39
+```
+`awscurl` signs requests with SigV4 from your AWS credentials. The API uses
+`AWS_IAM` authorization, so requests must be signed — plain `curl` returns 403.
+If temporary credentials expire (403 errors), re-export them and retry.
+
+### 7.2 Local unit tests (no AWS needed)
+
+```bash
+./.venv/bin/python -m pytest -q
+```
+Runs the handler unit tests with a fake ONNX session — validates payload parsing
+(API proxy / direct / Step Functions), caching, validation errors, and the
+combiner's ensemble strategies, with no AWS calls or `onnxruntime`. `pytest.ini`
+restricts collection to `tests/` so it never imports the Linux-built packages in
+`cdk.out/`. Expect `12 passed`.
+
+### 7.3 Confirm the models are in the bucket
+
+```bash
+aws s3 ls s3://<ModelBucketName>/models/ --region us-east-1
+```
+Lists the objects the S3 Files access point exposes to the functions as
+`/mnt/models`. You should see `model.onnx`, `model_a.onnx`, `model_b.onnx`. If
+empty, upload them:
+```bash
+aws s3 cp models_local/ s3://<ModelBucketName>/models/ \
+  --recursive --exclude "*" --include "*.onnx" --region us-east-1
+```
+
+### 7.4 Single-model inference — `POST /predict`
+
+```bash
+awscurl --service execute-api --region us-east-1 -X POST \
+  -d '{"input_data":[5.1,3.5,1.4,0.2]}' \
+  "https://<ApiId>.execute-api.us-east-1.amazonaws.com/prod/predict"
+```
+Invokes the Predict Lambda, which memory-maps `model.onnx` from the S3 Files
+mount and runs inference. Expect JSON with `predictions`, `model:"predict"`,
+`cache_hit:false`, `latency_ms`. The first call is slower (cold start: NFS mount
++ model load).
+
+### 7.5 Prove the cross-invocation cache
+
+Repeat the **exact same** `/predict` call. The first call wrote the result (keyed
+by a SHA-256 of the input) to `/mnt/models/cache/` on the shared mount; the second
+finds it and returns `"cache_hit": true` with a lower `latency_ms`.
+
+### 7.6 Multi-model ensemble — `POST /ensemble`
+
+```bash
+awscurl --service execute-api --region us-east-1 -X POST \
+  -d '{"input_data":[6.2,2.9,4.3,1.3]}' \
+  "https://<ApiId>.execute-api.us-east-1.amazonaws.com/prod/ensemble"
+```
+Starts a synchronous Step Functions Express execution: `model_a` and `model_b`
+run in parallel (each reading its own model from the mount), then a combiner
+Lambda merges them. Expect:
+```json
+{"ensemble_strategy":"average","model_count":2,
+ "prediction":{"label":1,"probabilities":[...]},
+ "members":[{"model":"model_a","label":1,"latency_ms":...,"cache_hit":false},
+            {"model":"model_b","label":1,"latency_ms":...,"cache_hit":false}]}
+```
+> The bundled models have **random weights** (from `generate_model.py`), so the
+> specific `label` isn't meaningful — the calls demonstrate the mechanics. Upload
+> your own `.onnx` files to `models/` for real predictions (no redeploy).
+
+### 7.7 Validation check (optional)
+
+```bash
+awscurl --service execute-api --region us-east-1 -X POST \
+  -d '{"foo":"bar"}' \
+  "https://<ApiId>.execute-api.us-east-1.amazonaws.com/prod/predict"
+```
+Omitting `input_data` returns HTTP 400 with
+`{"error": "Missing required field 'input_data'."}`.
+
+### 7.8 Inspect behind the scenes (optional)
+
+```bash
+# Recent ensemble workflow runs
+aws stepfunctions list-executions \
+  --state-machine-arn <EnsembleStateMachineArn> --max-results 5 --region us-east-1
+
+# Tail a function's logs (find the name in the Lambda console / list-functions)
+aws logs tail /aws/lambda/<PredictFunctionName> --since 10m --region us-east-1
+
+# Direct Lambda invoke (bypasses API Gateway / SigV4)
+aws lambda invoke --function-name <PredictFunctionName> \
+  --payload '{"input_data":[5.1,3.5,1.4,0.2]}' \
+  --cli-binary-format raw-in-base64-out /tmp/out.json --region us-east-1 && cat /tmp/out.json
+```
+
+### 7.9 Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| `403` / auth error | Temporary creds expired, or caller lacks `execute-api:Invoke` | Refresh credentials; ensure the principal can invoke the API |
+| `500` + "Model not found" in logs | Models not uploaded to `models/` | Re-run the upload in §7.3 |
+| `Missing required field 'input_data'` on `/ensemble` | Old function code (pre body-unwrap fix) | Redeploy: `cdk deploy` |
+| `Could not connect to the endpoint URL` | Transient network / DNS / proxy | Retry; add `--region us-east-1`; check `HTTPS_PROXY` |
+| First `/predict` is slow (~0.5–2 s) | Cold start (NFS mount + model load) | Expected; set `provisionedConcurrency>=1` |
+| `cache_hit` always false | `cacheEnabled=false`, or write perms/TTL | Check `cacheEnabled`, `cacheTtlSeconds`, `s3files:ClientWrite` |
+
+---
+
+## 8. Configuration (CDK context)
 
 Set in `cdk.json` or with `--context key=value`:
 
@@ -217,7 +324,7 @@ next cold start.
 
 ---
 
-## 8. Security
+## 9. Security
 
 - **API auth is `AWS_IAM` by default** — requests must be SigV4-signed and the
   caller needs `execute-api:Invoke`. Overriding to `apiAuth=NONE` makes the
@@ -234,9 +341,12 @@ next cold start.
   S3 gateway endpoint) provides egress.
 - The model bucket uses `RemovalPolicy.RETAIN` to protect model artifacts.
 
+See [SECURITY.md](./SECURITY.md) for the full list of accepted trade-offs and
+production hardening recommendations.
+
 ---
 
-## 9. Cost notes
+## 10. Cost notes
 
 - **S3 Files** stores models at S3 pricing (~$0.023/GB) vs. ~$0.30/GB for EFS.
 - The stack runs a **NAT gateway** (hourly + per-GB) — the main idle cost — plus
@@ -247,7 +357,7 @@ next cold start.
 
 ---
 
-## 10. Cleanup
+## 11. Cleanup
 
 ```bash
 cdk destroy
@@ -260,7 +370,7 @@ those from the S3 console if any accumulated.
 
 ---
 
-## 11. When NOT to use this pattern
+## 12. When NOT to use this pattern
 
 - **GPU inference** → Amazon SageMaker endpoints (Lambda has no GPU).
 - **Sub-50 ms p99 latency** → SageMaker Serverless/Provisioned (NFS mount adds
