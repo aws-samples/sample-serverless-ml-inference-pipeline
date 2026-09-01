@@ -1,0 +1,3 @@
+# Combiner Lambda runtime dependencies (bundled into the deployment package).
+numpy>=1.26.0,<2.0.0
+aws-lambda-powertools>=2.30.0,<3.0.0

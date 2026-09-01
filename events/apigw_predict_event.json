@@ -1,0 +1,14 @@
+{
+  "resource": "/predict",
+  "path": "/predict",
+  "httpMethod": "POST",
+  "requestContext": {
+    "resourcePath": "/predict",
+    "httpMethod": "POST"
+  },
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "isBase64Encoded": false,
+  "body": "{\"input_data\": [5.1, 3.5, 1.4, 0.2]}"
+}
